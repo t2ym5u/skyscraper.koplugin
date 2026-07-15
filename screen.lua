@@ -111,21 +111,14 @@ function SkyscraperScreen:buildLayout()
         or  math.floor(sw * 0.9)
 
     -- Top action bar
-    local top_buttons = ButtonTable:new{
-        shrink_unneeded_width = true,
-        width   = button_width,
-        buttons = {{
-            { text = _("New"),        callback = function() self:onNewGame() end },
-            { id = "grid_button",     text = self:getGridButtonText(),
-              callback = function() self:openGridMenu() end },
-            { id = "diff_button",     text = self:getDiffButtonText(),
-              callback = function() self:openDifficultyMenu() end },
+    local title_bar = self:buildTitleBar(_("Skyscraper"), function()
+        return {
+            { text = _("New game"),            callback = function() self:onNewGame() end },
+            { text = self:getGridButtonText(), callback = function() self:openGridMenu() end },
+            { text = self:getDiffButtonText(), callback = function() self:openDifficultyMenu() end },
             self:makeRulesButtonConfig(GAME_RULES_EN, GAME_RULES_FR),
-            self:makeCloseButtonConfig(),
-        }},
-    }
-    self.grid_button = top_buttons:getButtonById("grid_button")
-    self.diff_button = top_buttons:getButtonById("diff_button")
+        }
+    end)
 
     -- Digit buttons 1..n
     local digit_row = {}
@@ -153,40 +146,36 @@ function SkyscraperScreen:buildLayout()
         }},
     }
 
+    local footer = VerticalGroup:new{
+        align = "center",
+        digit_buttons,
+        VerticalSpan:new{ width = Size.span.vertical_large },
+        bottom_buttons,
+    }
+
     if is_landscape then
         local right_panel = VerticalGroup:new{
             align = "center",
-            top_buttons,
-            VerticalSpan:new{ width = Size.span.vertical_large },
             self.status_text,
             VerticalSpan:new{ width = Size.span.vertical_large },
-            digit_buttons,
-            VerticalSpan:new{ width = Size.span.vertical_large },
-            bottom_buttons,
+            footer,
         }
-        self.layout = HorizontalGroup:new{
+        local content = HorizontalGroup:new{
             align  = "center",
             board_frame,
             HorizontalSpan:new{ width = Size.span.horizontal_default },
             right_panel,
         }
+        self:buildLandscapeLayout(title_bar, content)
     else
-        self.layout = VerticalGroup:new{
+        local content = VerticalGroup:new{
             align = "center",
-            VerticalSpan:new{ width = Size.span.vertical_large },
-            top_buttons,
-            VerticalSpan:new{ width = Size.span.vertical_large },
             board_frame,
             VerticalSpan:new{ width = Size.span.vertical_large },
             self.status_text,
-            VerticalSpan:new{ width = Size.span.vertical_large },
-            digit_buttons,
-            VerticalSpan:new{ width = Size.span.vertical_large },
-            bottom_buttons,
-            VerticalSpan:new{ width = Size.span.vertical_large },
         }
+        self:buildPortraitLayout(title_bar, content, footer)
     end
-    self[1] = self.layout
     self:updateStatus()
 end
 
