@@ -3,5 +3,5 @@ return {
     name        = "skyscraper",
     fullname    = _("Skyscraper"),
     description = _("Place buildings by skyline clues"),
-    version     = "1.1.2",
+    version     = "1.1.3",
 }
