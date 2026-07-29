@@ -64,6 +64,93 @@ local function generateLatinSquare(n)
 end
 
 -- ---------------------------------------------------------------------------
+-- Uniqueness check
+-- ---------------------------------------------------------------------------
+
+-- Counts Latin-square completions (up to `limit`) consistent with the
+-- currently-visible clues, using full backtracking with clue checks applied
+-- as soon as a row/column completes (n is small -- 4 or 5 -- so this stays
+-- cheap even without per-cell clue pruning). Returns (solutions_found,
+-- exhausted); exhausted=true means node_budget was hit before the search
+-- concluded, so the count isn't proof. Mirrors
+-- sudokukiller.koplugin/board.lua's countCageSolutions.
+local NODE_BUDGET_UNIQUENESS = 500000
+
+local function countSolutions(clues, n, limit, node_budget)
+    local grid = {}
+    for r = 1, n do grid[r] = {}; for c = 1, n do grid[r][c] = 0 end end
+    local solutions, nodes, exhausted = 0, 0, false
+
+    local function rowComplete(r) for c = 1, n do if grid[r][c] == 0 then return false end end return true end
+    local function colComplete(c) for r = 1, n do if grid[r][c] == 0 then return false end end return true end
+    local function checkRowClues(r)
+        local seq = {}
+        for c = 1, n do seq[c] = grid[r][c] end
+        if clues.left[r] and countVisible(seq) ~= clues.left[r] then return false end
+        if clues.right[r] then
+            local rev = {}
+            for i = 1, n do rev[i] = seq[n - i + 1] end
+            if countVisible(rev) ~= clues.right[r] then return false end
+        end
+        return true
+    end
+    local function checkColClues(c)
+        local seq = {}
+        for r = 1, n do seq[r] = grid[r][c] end
+        if clues.top[c] and countVisible(seq) ~= clues.top[c] then return false end
+        if clues.bottom[c] then
+            local rev = {}
+            for i = 1, n do rev[i] = seq[n - i + 1] end
+            if countVisible(rev) ~= clues.bottom[c] then return false end
+        end
+        return true
+    end
+
+    local function candidatesFor(r, c)
+        local used = {}
+        for cc = 1, n do if grid[r][cc] ~= 0 then used[grid[r][cc]] = true end end
+        for rr = 1, n do if grid[rr][c] ~= 0 then used[grid[rr][c]] = true end end
+        local cands = {}
+        for v = 1, n do if not used[v] then cands[#cands + 1] = v end end
+        return cands
+    end
+
+    local cells = {}
+    for r = 1, n do for c = 1, n do cells[#cells + 1] = { r = r, c = c } end end
+
+    local function search(depth)
+        if solutions >= limit or exhausted then return end
+        nodes = nodes + 1
+        if nodes > node_budget then exhausted = true; return end
+        if depth > #cells then solutions = solutions + 1; return end
+        local best_idx, best_cands, best_len = nil, nil, n + 1
+        for i, cell in ipairs(cells) do
+            if grid[cell.r][cell.c] == 0 then
+                local cands = candidatesFor(cell.r, cell.c)
+                if #cands < best_len then
+                    best_len, best_cands, best_idx = #cands, cands, i
+                    if best_len <= 1 then break end
+                end
+            end
+        end
+        if best_idx == nil then solutions = solutions + 1; return end
+        if best_len == 0 then return end
+        local cell = cells[best_idx]
+        for _, v in ipairs(best_cands) do
+            grid[cell.r][cell.c] = v
+            local ok = true
+            if rowComplete(cell.r) and not checkRowClues(cell.r) then ok = false end
+            if ok and colComplete(cell.c) and not checkColClues(cell.c) then ok = false end
+            if ok then search(depth + 1) end
+            grid[cell.r][cell.c] = 0
+            if solutions >= limit or exhausted then return end
+        end
+    end
+    search(1)
+    return solutions, exhausted
+end
+
+-- ---------------------------------------------------------------------------
 -- SkyscraperBoard
 -- ---------------------------------------------------------------------------
 
@@ -91,23 +178,21 @@ end
 -- Generate
 -- ---------------------------------------------------------------------------
 
-function SkyscraperBoard:generate(difficulty)
-    self.difficulty = difficulty or self.difficulty
-    local n = self.n
+-- Even the FULL 4n-clue set (before any digging) is not always unique for
+-- an arbitrary Latin square -- distinct squares can happen to produce
+-- identical visibility-clue vectors in all 4 directions (same structural
+-- shape as kakuro's "generalized rectangle swap", just at these small grid
+-- sizes: n=4 gives only 16 clues total). Digging can only ever remove
+-- information, so a Latin square whose full clue set is already ambiguous
+-- can never be rescued by hiding clues -- it needs a fresh Latin square
+-- instead. Bounded retry: n is tiny (4-5) so both generateLatinSquare and
+-- countSolutions are cheap.
+local FULL_CLUE_MAX_ATTEMPTS = 30
 
-    -- 1. Build solution (random Latin square)
-    local sol = generateLatinSquare(n)
-    self.solution = sol
-
-    -- 2. Compute all 4n clues from the solution
-    local top    = {}
-    local bottom = {}
-    local left   = {}
-    local right  = {}
-
+local function computeAllClues(sol, n)
+    local top, bottom, left, right = {}, {}, {}, {}
     for c = 1, n do
-        local col_fwd = {}
-        local col_rev = {}
+        local col_fwd, col_rev = {}, {}
         for r = 1, n do
             col_fwd[r] = sol[r][c]
             col_rev[r] = sol[n - r + 1][c]
@@ -115,10 +200,8 @@ function SkyscraperBoard:generate(difficulty)
         top[c]    = countVisible(col_fwd)
         bottom[c] = countVisible(col_rev)
     end
-
     for r = 1, n do
-        local row_fwd = {}
-        local row_rev = {}
+        local row_fwd, row_rev = {}, {}
         for c = 1, n do
             row_fwd[c] = sol[r][c]
             row_rev[c] = sol[r][n - c + 1]
@@ -126,25 +209,69 @@ function SkyscraperBoard:generate(difficulty)
         left[r]  = countVisible(row_fwd)
         right[r] = countVisible(row_rev)
     end
+    return { top = top, bottom = bottom, left = left, right = right }
+end
 
-    -- 3. Decide which clues to expose based on difficulty
+function SkyscraperBoard:generate(difficulty)
+    self.difficulty = difficulty or self.difficulty
+    local n = self.n
+
+    -- 1-2. Build a solution whose FULL clue set is already unique, retrying
+    -- with a fresh Latin square if not (see comment above).
+    local sol, clues
+    for _attempt = 1, FULL_CLUE_MAX_ATTEMPTS do
+        local candidate_sol = generateLatinSquare(n)
+        local candidate_clues = computeAllClues(candidate_sol, n)
+        local solutions, exhausted = countSolutions(candidate_clues, n, 2, NODE_BUDGET_UNIQUENESS)
+        if not exhausted and solutions == 1 then
+            sol, clues = candidate_sol, candidate_clues
+            break
+        end
+    end
+    if not sol then
+        -- Every attempt's full clue set was ambiguous (should be very
+        -- rare) -- fall back to the last candidate rather than looping
+        -- forever; digging below will still only remove clues that don't
+        -- introduce *additional* ambiguity, it just can't fix what was
+        -- already broken before any digging.
+        sol = generateLatinSquare(n)
+        clues = computeAllClues(sol, n)
+    end
+    self.solution = sol
+
+    -- 3. Decide which clues to expose: dig one at a time (like
+    -- sudoku-common's hole-digging), starting with every clue visible and
+    -- verifying with countSolutions after each tentative hide, putting the
+    -- clue back if that broke uniqueness -- the old "shuffle clues, keep a
+    -- flat ratio" approach never checked this (see
+    -- docs/generator_robustness_audit.md's Tier 2 table: measured near-0%
+    -- unique even on Easy -- skyscraper has no cell givens at all, only
+    -- these clues, so this is the only lever available).
     local ratio = CLUE_RATIOS[self.difficulty] or 0.40
     local all_clues = {}
     for c = 1, n do
-        all_clues[#all_clues + 1] = { side = "top",    idx = c, val = top[c] }
-        all_clues[#all_clues + 1] = { side = "bottom", idx = c, val = bottom[c] }
+        all_clues[#all_clues + 1] = { side = "top",    idx = c }
+        all_clues[#all_clues + 1] = { side = "bottom", idx = c }
     end
     for r = 1, n do
-        all_clues[#all_clues + 1] = { side = "left",   idx = r, val = left[r] }
-        all_clues[#all_clues + 1] = { side = "right",  idx = r, val = right[r] }
+        all_clues[#all_clues + 1] = { side = "left",   idx = r }
+        all_clues[#all_clues + 1] = { side = "right",  idx = r }
     end
-    shuffle(all_clues)
     local keep = math.max(4, math.floor(#all_clues * ratio))
+    local target_hide = #all_clues - keep
 
-    local clues = { top = {}, bottom = {}, left = {}, right = {} }
-    for i = 1, keep do
-        local cl = all_clues[i]
-        clues[cl.side][cl.idx] = cl.val
+    shuffle(all_clues)
+    local hidden = 0
+    for _, cl in ipairs(all_clues) do
+        if hidden >= target_hide then break end
+        local saved = clues[cl.side][cl.idx]
+        clues[cl.side][cl.idx] = nil
+        local solutions, exhausted = countSolutions(clues, n, 2, NODE_BUDGET_UNIQUENESS)
+        if not exhausted and solutions == 1 then
+            hidden = hidden + 1
+        else
+            clues[cl.side][cl.idx] = saved
+        end
     end
     self.clues = clues
 
