@@ -16,6 +16,7 @@ Place building heights 1–N in each row and column (no repeats, like Sudoku). E
 - **Three difficulty levels** — Easy, Medium, Hard
 - **Visibility preview** — shows the current count when checking a row
 - **Check** — highlights constraint violations
+- **Hint** — two taps: the first says which cell is about to give, the second acts on it. A cell that contradicts the solution is always reported before a fresh one is revealed
 - **Auto-save** — puzzle state saved and restored on next launch
 
 ## Installation

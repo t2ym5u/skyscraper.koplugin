@@ -1,4 +1,5 @@
 local grid_utils = require("grid_utils")
+local Hint      = require("hint")
 
 local emptyGrid     = grid_utils.emptyGrid
 local emptyBoolGrid = grid_utils.emptyBoolGrid
@@ -347,6 +348,15 @@ end
 -- ---------------------------------------------------------------------------
 -- Serialization
 -- ---------------------------------------------------------------------------
+
+-- Givens live in `given`, and the player's own work in `grid` (not `user`).
+Hint.install(SkyscraperBoard, {
+    getUser     = function(b, r, c) return b.grid[r][c] end,
+    getSolution = function(b, r, c) return b.solution[r][c] end,
+    isGiven     = function(b, r, c) return b.given[r] and b.given[r][c] == true end,
+    setCell     = function(b, r, c, v) return b:setCell(r, c, v) end,
+    clearCell   = function(b, r, c) return b:clearCell(r, c) end,
+})
 
 function SkyscraperBoard:serialize()
     local n = self.n
