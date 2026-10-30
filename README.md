@@ -34,7 +34,7 @@ Place building heights 1–N in each row and column (no repeats, like Sudoku). E
 | Enter a height | Tap the digit button |
 | Erase a cell | Tap **Erase** |
 | Check progress | Tap **Check** |
-| New puzzle | Tap **New** |
+| New puzzle | Tap **New game** |
 | Show rules | Tap **Rules** |
 
 ## License

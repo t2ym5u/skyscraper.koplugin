@@ -1,8 +1,11 @@
 local Blitbuffer = require("ffi/blitbuffer")
+local Device     = require("device")
 local Font       = require("ui/font")
 local Geom       = require("ui/geometry")
 local RenderText = require("ui/rendertext")
 local Size       = require("ui/size")
+
+local Screen = Device.screen
 
 local gwb            = require("grid_widget_base")
 local GridWidgetBase = gwb.GridWidgetBase
@@ -37,7 +40,6 @@ function SkyscraperBoardWidget:init()
     -- (n+2)×(n+2) area; the actual game grid sits in the inner n×n region.
     self.cols       = n + 2
     self.rows       = n + 2
-    self.size_ratio = 0.82
     GridWidgetBase.init(self)
 
     -- Cache derived values
@@ -100,15 +102,19 @@ function SkyscraperBoardWidget:paintTo(bb, x, y)
     -- -----------------------------------------------------------------------
     -- Game grid lines
     -- -----------------------------------------------------------------------
+    -- The grid's outer border is the board's only frame (the clues sit
+    -- outside it), so it is drawn thick enough to read as one.
     local thin  = Size.line.thin  or 1
-    local thick = Size.line.thick or 2
-    local gw    = math.ceil(n * cell)
-    local gh    = math.ceil(n * cell)
+    local thick = math.max(Size.line.thick or 2, math.floor(cell * 0.05))
+    local gw    = math.floor(n * cell)
+    local gh    = math.floor(n * cell)
 
     for i = 0, n do
         local lw = (i == 0 or i == n) and thick or thin
-        drawLine(bb, gx + math.floor(i * cell), gy, lw, gh, C_LINE)
-        drawLine(bb, gx, gy + math.floor(i * cell), gw, lw, C_LINE)
+        -- The last line is drawn inside the grid, not past its edge.
+        local p  = math.floor(i * cell) - (i == n and lw or 0)
+        drawLine(bb, gx + p, gy, lw, gh, C_LINE)
+        drawLine(bb, gx, gy + p, gw, lw, C_LINE)
     end
 
     -- -----------------------------------------------------------------------
@@ -137,7 +143,9 @@ function SkyscraperBoardWidget:paintTo(bb, x, y)
     -- -----------------------------------------------------------------------
     local clue_padding = 2
     local clue_inner   = math.max(1, math.floor(cell - 2 * clue_padding))
-    local clue_size    = math.max(8, math.floor(cell * 0.55))
+    -- Font:getFace scales its size by DPI; a size taken from pixels has to
+    -- be unscaled first or the clues come out nearly twice as big.
+    local clue_size    = math.max(8, math.floor(cell * 0.55 / (Screen:scaleBySize(1000) / 1000)))
     local clue_face    = Font:getFace("cfont", clue_size)
 
     local function drawClue(cx, cy, val)
