@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-10-30
+
+### Changed
+- Redesigned play screen: the board is larger, filling the room the controls
+  leave, with one even digit pad and a full-width action bar under the status
+  line. The grid's thick outer border is now the board's only frame.
+- The status line reads "5×5 · Medium · Empty: 12" and wraps in landscape
+  instead of being cut off.
+- The title-bar menu shows "Size: …" and "Difficulty: …" (was "Grid: …" and
+  "Diff: …"), like every other game.
+- Once the puzzle is solved, the action bar shows "New game" in place of
+  Erase/Check/Hint, so the next round no longer needs the menu.
+
+### Fixed
+- The clues around the grid came out nearly twice too big on high-DPI
+  readers, and digits overflowed their cells (the shared font fit accepted
+  every size). Both now fit on every screen.
+- The grid's right and bottom border lines were drawn past its edge.
+- Using a hint wiped the saved game; it is now kept. When a hint fills the
+  last cell, the status shows the win message.
+
 ## [1.2.2] - 2026-10-07
 
 ### Fixed
