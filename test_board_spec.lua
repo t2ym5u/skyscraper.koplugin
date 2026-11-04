@@ -166,4 +166,33 @@ describe("SkyscraperBoard", function()
             assert.is_false(b:load({}))
         end)
     end)
+
+    describe("countSolutions", function()
+        local none = function() return { top = {}, bottom = {}, left = {}, right = {} } end
+
+        it("counts all 576 Latin squares of order 4 when no clue is shown", function()
+            local count, exhausted = Board._countSolutions(none(), 4, 1000, 1e7)
+            assert.is_false(exhausted)
+            assert.are.equal(576, count)
+        end)
+
+        it("finds exactly one solution for every generated puzzle", function()
+            for seed = 1, 20 do
+                math.randomseed(seed)
+                local b = Board:new{ n = 5, difficulty = "hard" }
+                local count, exhausted = Board._countSolutions(b.clues, 5, 2, 1e7)
+                assert.is_false(exhausted)
+                assert.are.equal(1, count)
+            end
+        end)
+
+        it("generates a 5×5 Hard puzzle quickly (was up to 6 s on a desktop)", function()
+            local t = os.clock()
+            for seed = 1, 20 do
+                math.randomseed(seed)
+                Board:new{ n = 5, difficulty = "hard" }
+            end
+            assert.is_true(os.clock() - t < 5, "20 puzzles took " .. (os.clock() - t) .. " s")
+        end)
+    end)
 end)

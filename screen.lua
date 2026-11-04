@@ -65,7 +65,7 @@ local SkyscraperScreen = ScreenBase:extend{}
 function SkyscraperScreen:init()
     local state = self.plugin:loadState()
     local n     = self.plugin:getSetting("grid_n", 5)
-    self.board  = SkyscraperBoard:new{ n = n }
+    self.board  = SkyscraperBoard:new{ n = n, empty = true }
     if not self.board:load(state) then
         self.board:generate(self.plugin:getSetting("difficulty", "easy"))
     end
@@ -200,7 +200,7 @@ end
 function SkyscraperScreen:onNewGame()
     local diff = self.plugin:getSetting("difficulty", "easy")
     local n    = self.plugin:getSetting("grid_n", 5)
-    self.board = SkyscraperBoard:new{ n = n }
+    self.board = SkyscraperBoard:new{ n = n, empty = true }
     self.board:generate(diff)
     self.selected = nil
     self.plugin:saveState(self.board:serialize())
