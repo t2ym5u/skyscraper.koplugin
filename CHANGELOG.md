@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-11-04
+
+### Changed
+- Much faster puzzle generation: the uniqueness check now places a whole
+  row at a time and drops orderings that contradict a clue right away,
+  instead of filling cells one by one and checking clues only once a row or
+  column is complete. 5×5 Hard went from up to 6 s on a desktop (minutes on
+  a Kobo) to a few hundredths of a second; puzzles are unchanged (still
+  exactly one solution).
+- Opening the game no longer builds a puzzle it then throws away (it was
+  generated even when a saved game was about to be restored), and New game
+  builds one puzzle instead of two.
+
 ## [1.4.3] - 2026-11-03
 
 ### Changed

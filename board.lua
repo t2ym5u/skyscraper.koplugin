@@ -68,82 +68,122 @@ end
 -- Uniqueness check
 -- ---------------------------------------------------------------------------
 
+-- Every ordering of 1..n with its visibility from each end, built once per n
+-- (120 for n = 5). A solution is one ordering per row, so the search below
+-- places a whole row at a time.
+local perm_cache = {}
+
+local function rowPermutations(n)
+    if perm_cache[n] then return perm_cache[n] end
+    local perms, cur, used = {}, {}, {}
+    local function build(k)
+        if k > n then
+            local p, rev = {}, {}
+            for i = 1, n do p[i] = cur[i]; rev[i] = cur[n - i + 1] end
+            p.left, p.right = countVisible(p), countVisible(rev)
+            perms[#perms + 1] = p
+            return
+        end
+        for v = 1, n do
+            if not used[v] then
+                used[v], cur[k] = true, v
+                build(k + 1)
+                used[v] = false
+            end
+        end
+    end
+    build(1)
+    perm_cache[n] = perms
+    return perms
+end
+
 -- Counts Latin-square completions (up to `limit`) consistent with the
--- currently-visible clues, using full backtracking with clue checks applied
--- as soon as a row/column completes (n is small -- 4 or 5 -- so this stays
--- cheap even without per-cell clue pruning). Returns (solutions_found,
--- exhausted); exhausted=true means node_budget was hit before the search
--- concluded, so the count isn't proof. Mirrors
--- sudokukiller.koplugin/board.lua's countCageSolutions.
+-- visible clues. Rows are placed whole, from the orderings that match the
+-- row's left/right clues; a row is rejected as soon as it repeats a digit in
+-- a column or makes a top clue unreachable (seen from the top, a column can
+-- only still gain one building per remaining row, and only with a taller
+-- one). Bottom clues are checked on the last row. Returns
+-- (solutions_found, exhausted); exhausted=true means node_budget was hit
+-- before the search concluded, so the count isn't proof.
+--
+-- The previous cell-by-cell search only checked clues once a row or column
+-- was complete: 5×5 Hard took up to 6 s on a desktop, minutes on a Kobo.
 local NODE_BUDGET_UNIQUENESS = 500000
 
 local function countSolutions(clues, n, limit, node_budget)
-    local grid = {}
-    for r = 1, n do grid[r] = {}; for c = 1, n do grid[r][c] = 0 end end
-    local solutions, nodes, exhausted = 0, 0, false
-
-    local function rowComplete(r) for c = 1, n do if grid[r][c] == 0 then return false end end return true end
-    local function colComplete(c) for r = 1, n do if grid[r][c] == 0 then return false end end return true end
-    local function checkRowClues(r)
-        local seq = {}
-        for c = 1, n do seq[c] = grid[r][c] end
-        if clues.left[r] and countVisible(seq) ~= clues.left[r] then return false end
-        if clues.right[r] then
-            local rev = {}
-            for i = 1, n do rev[i] = seq[n - i + 1] end
-            if countVisible(rev) ~= clues.right[r] then return false end
-        end
-        return true
-    end
-    local function checkColClues(c)
-        local seq = {}
-        for r = 1, n do seq[r] = grid[r][c] end
-        if clues.top[c] and countVisible(seq) ~= clues.top[c] then return false end
-        if clues.bottom[c] then
-            local rev = {}
-            for i = 1, n do rev[i] = seq[n - i + 1] end
-            if countVisible(rev) ~= clues.bottom[c] then return false end
-        end
-        return true
-    end
-
-    local function candidatesFor(r, c)
-        local used = {}
-        for cc = 1, n do if grid[r][cc] ~= 0 then used[grid[r][cc]] = true end end
-        for rr = 1, n do if grid[rr][c] ~= 0 then used[grid[rr][c]] = true end end
-        local cands = {}
-        for v = 1, n do if not used[v] then cands[#cands + 1] = v end end
-        return cands
-    end
-
-    local cells = {}
-    for r = 1, n do for c = 1, n do cells[#cells + 1] = { r = r, c = c } end end
-
-    local function search(depth)
-        if solutions >= limit or exhausted then return end
-        nodes = nodes + 1
-        if nodes > node_budget then exhausted = true; return end
-        if depth > #cells then solutions = solutions + 1; return end
-        local best_idx, best_cands, best_len = nil, nil, n + 1
-        for i, cell in ipairs(cells) do
-            if grid[cell.r][cell.c] == 0 then
-                local cands = candidatesFor(cell.r, cell.c)
-                if #cands < best_len then
-                    best_len, best_cands, best_idx = #cands, cands, i
-                    if best_len <= 1 then break end
-                end
+    local perms = rowPermutations(n)
+    local rows = {}
+    for r = 1, n do
+        local list = {}
+        for _, p in ipairs(perms) do
+            if (not clues.left[r] or p.left == clues.left[r])
+               and (not clues.right[r] or p.right == clues.right[r]) then
+                list[#list + 1] = p
             end
         end
-        if best_idx == nil then solutions = solutions + 1; return end
-        if best_len == 0 then return end
-        local cell = cells[best_idx]
-        for _, v in ipairs(best_cands) do
-            grid[cell.r][cell.c] = v
+        rows[r] = list
+    end
+
+    local used = {}               -- used[c][v]: digit v already in column c
+    local top_max, top_vis = {}, {}
+    for c = 1, n do used[c], top_max[c], top_vis[c] = {}, 0, 0 end
+    local placed = {}
+    local solutions, nodes, exhausted = 0, 0, false
+
+    local function bottomOk()
+        for c = 1, n do
+            local want = clues.bottom[c]
+            if want then
+                local tallest, seen = 0, 0
+                for r = n, 1, -1 do
+                    local h = placed[r][c]
+                    if h > tallest then tallest, seen = h, seen + 1 end
+                end
+                if seen ~= want then return false end
+            end
+        end
+        return true
+    end
+
+    local function search(r)
+        if r > n then
+            if bottomOk() then solutions = solutions + 1 end
+            return
+        end
+        local left_after = n - r
+        for _, p in ipairs(rows[r]) do
+            nodes = nodes + 1
+            if nodes > node_budget then exhausted = true; return end
             local ok = true
-            if rowComplete(cell.r) and not checkRowClues(cell.r) then ok = false end
-            if ok and colComplete(cell.c) and not checkColClues(cell.c) then ok = false end
-            if ok then search(depth + 1) end
-            grid[cell.r][cell.c] = 0
+            for c = 1, n do
+                local v = p[c]
+                if used[c][v] then ok = false; break end
+                local want = clues.top[c]
+                if want then
+                    local mx, vis = top_max[c], top_vis[c]
+                    if v > mx then mx, vis = v, vis + 1 end
+                    -- too many seen already, or not enough rows/taller
+                    -- digits left to reach the clue
+                    if vis > want or vis + math.min(left_after, n - mx) < want then
+                        ok = false; break
+                    end
+                end
+            end
+            if ok then
+                local saved_max, saved_vis = {}, {}
+                for c = 1, n do
+                    local v = p[c]
+                    used[c][v] = true
+                    saved_max[c], saved_vis[c] = top_max[c], top_vis[c]
+                    if v > top_max[c] then top_max[c], top_vis[c] = v, top_vis[c] + 1 end
+                end
+                placed[r] = p
+                search(r + 1)
+                for c = 1, n do
+                    used[c][p[c]] = false
+                    top_max[c], top_vis[c] = saved_max[c], saved_vis[c]
+                end
+            end
             if solutions >= limit or exhausted then return end
         end
     end
@@ -157,6 +197,7 @@ end
 
 local SkyscraperBoard = {}
 SkyscraperBoard.__index = SkyscraperBoard
+SkyscraperBoard._countSolutions = countSolutions   -- exposed for the specs
 
 function SkyscraperBoard:new(opts)
     opts = opts or {}
@@ -171,7 +212,9 @@ function SkyscraperBoard:new(opts)
         sel_r       = nil,
         sel_c       = nil,
     }, self)
-    obj:generate(obj.difficulty)
+    -- opts.empty: the caller loads a save or generates itself, so don't
+    -- build a puzzle that would be thrown away.
+    if not opts.empty then obj:generate(obj.difficulty) end
     return obj
 end
 
