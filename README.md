@@ -12,10 +12,9 @@ Place building heights 1–N in each row and column (no repeats, like Sudoku). E
 
 ## Features
 
-- **Multiple grid sizes** — 4×4, 5×5, 6×6
-- **Three difficulty levels** — Easy, Medium, Hard
-- **Visibility preview** — shows the current count when checking a row
-- **Check** — highlights constraint violations
+- **Two grid sizes** — 4×4 and 5×5
+- **Three difficulty levels** — every puzzle can be solved by logic alone, with no guessing. Easy shows more clues and needs only the simple steps (what a 1 or an N clue means, how high a cell near a clue can be, the one place left for a height, a row with two empty cells); Medium and Hard also need to work through the orderings a row or column allows with its clue, Hard with the fewest clues
+- **Check** — marks the heights that are wrong
 - **Hint** — two taps: the first says which cell is about to give, the second acts on it. A cell that contradicts the solution is always reported before a fresh one is revealed
 - **Auto-save** — puzzle state saved and restored on next launch
 

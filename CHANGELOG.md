@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-11-05
+
+### Changed
+- Every puzzle can now be solved by logic alone, with no guessing. A clue
+  is only hidden if the grid can still be filled step by step: what a 1 or
+  an N clue says, how tall a cell close to a clue can be, a cell with one
+  height left, the one place left for a height in a row or column, a row
+  with only two empty cells, and the orderings a row or column allows with
+  its clues. Before, a good share of puzzles (about 3 in 10 on 5×5 Medium
+  and Hard, and some Easy ones) had a single solution that could only be
+  found by trial and error.
+- The three levels are really different now. Easy needs only the simple
+  steps and shows a few more clues on 4×4. Medium needs to work through
+  the orderings of a row or column. Hard shows fewer clues than Medium and
+  needs that step more often.
+- A puzzle is won as soon as the grid keeps the rules: every row and column
+  holds each height once and every clue sees the right count.
+- Puzzles are built faster: at most about 0.03 s on a desktop (5×5 Hard
+  could take 0.5 s), with a progress bar if it ever takes a while on the
+  e-reader.
+- The Daily Challenge grid for the day of the update changes once.
+  Games in progress are kept.
+
 ## [1.5.2] - 2026-11-04
 
 ### Fixed
