@@ -19,6 +19,7 @@ local T               = require("ffi/util").template
 
 local ScreenBase             = require("screen_base")
 local MenuHelper             = require("menu_helper")
+local GenProgress            = require("gen_progress")
 local SkyscraperBoard        = lrequire("board")
 local SkyscraperBoardWidget  = lrequire("board_widget")
 
@@ -67,7 +68,8 @@ function SkyscraperScreen:init()
     local n     = self.plugin:getSetting("grid_n", 5)
     self.board  = SkyscraperBoard:new{ n = n, empty = true }
     if not self.board:load(state) then
-        self.board:generate(self.plugin:getSetting("difficulty", "easy"))
+        local diff = self.plugin:getSetting("difficulty", "easy")
+        GenProgress.run(function(on_progress) self.board:generate(diff, on_progress) end)
     end
     self.selected = nil
     ScreenBase.init(self)
@@ -201,7 +203,7 @@ function SkyscraperScreen:onNewGame()
     local diff = self.plugin:getSetting("difficulty", "easy")
     local n    = self.plugin:getSetting("grid_n", 5)
     self.board = SkyscraperBoard:new{ n = n, empty = true }
-    self.board:generate(diff)
+    GenProgress.run(function(on_progress) self.board:generate(diff, on_progress) end)
     self.selected = nil
     self.plugin:saveState(self.board:serialize())
     self:buildLayout()

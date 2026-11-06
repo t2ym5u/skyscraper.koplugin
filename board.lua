@@ -9,8 +9,20 @@ local shuffle       = grid_utils.shuffle
 local DEFAULT_N          = 5
 local DEFAULT_DIFFICULTY = "easy"
 
--- Fraction of clues to keep per difficulty
-local CLUE_RATIOS = { easy = 0.60, medium = 0.40, hard = 0.25 }
+-- logic.lua sits next to this file; load it by path (plugin-own modules
+-- share names across plugins, see docs/dev/PITFALLS.md).
+local _dir  = debug.getinfo(1, "S").source:sub(2):match("(.*[/\\])") or "./"
+local Logic = assert(loadfile(_dir .. "logic.lua"))()
+
+-- Difficulty ids; generate() says how each one is graded by logic.lua.
+local LOGIC_LEVELS = { easy = 1, medium = 2, hard = 3 }
+-- Easy keeps at least this share of the 4n clues; Medium aims halfway
+-- between that and Hard.
+local EASY_CLUE_RATIO = 0.60
+-- Latin squares tried for one whose full clue set the level's rules solve.
+local SQUARE_ATTEMPTS = { 150, 60, 60 }
+-- Medium/Hard: digs tried for one that really needs the level's rules.
+local DIG_ATTEMPTS = 12
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -222,17 +234,6 @@ end
 -- Generate
 -- ---------------------------------------------------------------------------
 
--- Even the FULL 4n-clue set (before any digging) is not always unique for
--- an arbitrary Latin square -- distinct squares can happen to produce
--- identical visibility-clue vectors in all 4 directions (same structural
--- shape as kakuro's "generalized rectangle swap", just at these small grid
--- sizes: n=4 gives only 16 clues total). Digging can only ever remove
--- information, so a Latin square whose full clue set is already ambiguous
--- can never be rescued by hiding clues -- it needs a fresh Latin square
--- instead. Bounded retry: n is tiny (4-5) so both generateLatinSquare and
--- countSolutions are cheap.
-local FULL_CLUE_MAX_ATTEMPTS = 30
-
 local function computeAllClues(sol, n)
     local top, bottom, left, right = {}, {}, {}, {}
     for c = 1, n do
@@ -256,70 +257,180 @@ local function computeAllClues(sol, n)
     return { top = top, bottom = bottom, left = left, right = right }
 end
 
-function SkyscraperBoard:generate(difficulty)
-    self.difficulty = difficulty or self.difficulty
-    local n = self.n
+-- Squares whose full clue set logic.lua solves with tier 1 alone (so with
+-- every tier), checked by the specs. Used, turned or mirrored at random,
+-- only if SQUARE_ATTEMPTS random squares all fail: that keeps the work
+-- bounded by a count, never by the clock, and still never ships a puzzle
+-- that needs a guess.
+local FALLBACK_SQUARES = {
+    [4] = {
+        { 2, 3, 4, 1 },
+        { 3, 4, 1, 2 },
+        { 4, 1, 2, 3 },
+        { 1, 2, 3, 4 },
+    },
+    [5] = {
+        { 4, 5, 2, 1, 3 },
+        { 1, 4, 3, 2, 5 },
+        { 2, 1, 5, 3, 4 },
+        { 5, 3, 1, 4, 2 },
+        { 3, 2, 4, 5, 1 },
+    },
+}
 
-    -- 1-2. Build a solution whose FULL clue set is already unique, retrying
-    -- with a fresh Latin square if not (see comment above).
+local function fallbackSquare(n)
+    local base = FALLBACK_SQUARES[n]
+    local turn, mirror = math.random(4) - 1, math.random(2) == 2
+    local sol = emptyGrid(n)
+    for r = 1, n do
+        for c = 1, n do
+            local rr, cc = r, c
+            for _ = 1, turn do rr, cc = cc, n - rr + 1 end
+            if mirror then cc = n - cc + 1 end
+            sol[rr][cc] = base[r][c]
+        end
+    end
+    return sol
+end
+
+-- The clue slots in a random order, and the full clue set of a square
+-- whose full clues logic.lua solves with rules up to `tier`. Even the full
+-- 4n clues of a random square often leave several solutions, or one that
+-- only trial and error finds; hiding clues can only make that worse, so
+-- such a square is replaced, never dug.
+local function newDig(n, tier)
     local sol, clues
-    for _attempt = 1, FULL_CLUE_MAX_ATTEMPTS do
-        local candidate_sol = generateLatinSquare(n)
-        local candidate_clues = computeAllClues(candidate_sol, n)
-        local solutions, exhausted = countSolutions(candidate_clues, n, 2, NODE_BUDGET_UNIQUENESS)
-        if not exhausted and solutions == 1 then
-            sol, clues = candidate_sol, candidate_clues
+    for _ = 1, SQUARE_ATTEMPTS[tier] do
+        local cand = generateLatinSquare(n)
+        local cand_clues = computeAllClues(cand, n)
+        if Logic.solve(cand_clues, n, tier) then
+            sol, clues = cand, cand_clues
             break
         end
     end
     if not sol then
-        -- Every attempt's full clue set was ambiguous (should be very
-        -- rare) -- fall back to the last candidate rather than looping
-        -- forever; digging below will still only remove clues that don't
-        -- introduce *additional* ambiguity, it just can't fix what was
-        -- already broken before any digging.
-        sol = generateLatinSquare(n)
+        sol = fallbackSquare(n)
         clues = computeAllClues(sol, n)
     end
-    self.solution = sol
-
-    -- 3. Decide which clues to expose: dig one at a time (like
-    -- sudoku-common's hole-digging), starting with every clue visible and
-    -- verifying with countSolutions after each tentative hide, putting the
-    -- clue back if that broke uniqueness -- the old "shuffle clues, keep a
-    -- flat ratio" approach never checked this (see
-    -- docs/generator_robustness_audit.md's Tier 2 table: measured near-0%
-    -- unique even on Easy -- skyscraper has no cell givens at all, only
-    -- these clues, so this is the only lever available).
-    local ratio = CLUE_RATIOS[self.difficulty] or 0.40
-    local all_clues = {}
+    local order = {}
     for c = 1, n do
-        all_clues[#all_clues + 1] = { side = "top",    idx = c }
-        all_clues[#all_clues + 1] = { side = "bottom", idx = c }
+        order[#order + 1] = { "top", c }
+        order[#order + 1] = { "bottom", c }
     end
     for r = 1, n do
-        all_clues[#all_clues + 1] = { side = "left",   idx = r }
-        all_clues[#all_clues + 1] = { side = "right",  idx = r }
+        order[#order + 1] = { "left", r }
+        order[#order + 1] = { "right", r }
     end
-    local keep = math.max(4, math.floor(#all_clues * ratio))
-    local target_hide = #all_clues - keep
+    shuffle(order)
+    return { n = n, sol = sol, clues = clues, order = order, removals = {} }
+end
 
-    shuffle(all_clues)
-    local hidden = 0
-    for _, cl in ipairs(all_clues) do
-        if hidden >= target_hide then break end
-        local saved = clues[cl.side][cl.idx]
-        clues[cl.side][cl.idx] = nil
-        local solutions, exhausted = countSolutions(clues, n, 2, NODE_BUDGET_UNIQUENESS)
-        if not exhausted and solutions == 1 then
-            hidden = hidden + 1
-        else
-            clues[cl.side][cl.idx] = saved
+-- One pass over the clues still shown: a clue is hidden if logic.lua,
+-- allowed rules up to `tier`, still solves the grid; otherwise it stays.
+-- Stops once `stop_after` clues are hidden in all. Returns how many this
+-- pass hid. Every state of the dig is a checked puzzle.
+local function digPass(dig, tier, stop_after, on_progress)
+    local clues, removals = dig.clues, dig.removals
+    local removed = 0
+    for i, slot in ipairs(dig.order) do
+        if #removals >= stop_after then break end
+        if on_progress then on_progress(i / #dig.order) end
+        local side, idx = slot[1], slot[2]
+        local saved = clues[side][idx]
+        if saved then
+            clues[side][idx] = nil
+            if Logic.solve(clues, dig.n, tier) then
+                removals[#removals + 1] = slot
+                removed = removed + 1
+            else
+                clues[side][idx] = saved
+            end
         end
     end
-    self.clues = clues
+    return removed
+end
 
-    -- 4. Reset player grid (all empty, no given cells in skyscraper)
+-- The clue set after the first `count` removals of the dig.
+local function digPrefix(dig, count)
+    local clues = computeAllClues(dig.sol, dig.n)
+    for i = 1, count do
+        local slot = dig.removals[i]
+        clues[slot[1]][slot[2]] = nil
+    end
+    return clues
+end
+
+-- Levels, all graded by logic.lua (no level ever needs a guess):
+--   Easy   dug with tier 1 only (edge bounds + singles), and at least
+--          EASY_CLUE_RATIO of the clues stay.
+--   Hard   dug with tier 2 (one clue at a time), then with tier 3 (both
+--          clues together, rows without clues): the fewest clues; needs
+--          tier 2, and tier 3 whenever tier 3 hid something.
+--   Medium the same dig stopped halfway between Easy's clue count and the
+--          end of tier 2, and never before the first state tier 1 cannot
+--          solve: needs tier 2, shows more clues than Hard.
+-- (Fewer clues never make a puzzle easier for logic.lua, so "tier 1 can
+-- solve it" switches off once along the dig and a binary search finds it.)
+-- A dig that tier 1 can still solve at the end, or where Medium would equal
+-- Hard, is redone on a new square, a bounded number of times (counted,
+-- never timed: the same seed must give the same puzzle on every device).
+-- If all fail, the last dig is used anyway; it is still solvable without
+-- guessing.
+--
+-- on_progress (optional): called with a 0..1 fraction while digging, for
+-- game-common's GenProgress bar.
+function SkyscraperBoard:generate(difficulty, on_progress)
+    self.difficulty = difficulty or self.difficulty
+    if not FALLBACK_SQUARES[self.n] then self.n = DEFAULT_N end
+    local n     = self.n
+    local slots = 4 * n
+    local diff  = LOGIC_LEVELS[self.difficulty] and self.difficulty or "medium"
+    local easy_removals = slots - math.ceil(slots * EASY_CLUE_RATIO)
+
+    local dig, keep
+    if diff == "easy" then
+        dig = newDig(n, 1)
+        digPass(dig, 1, easy_removals, on_progress)
+        keep = #dig.removals
+    else
+        for attempt = 1, DIG_ATTEMPTS do
+            -- Most first attempts succeed: give the first one 80 % of the
+            -- bar and each later one 80 % of what is left.
+            local from, span = 1 - 0.2 ^ (attempt - 1), 0.8 * 0.2 ^ (attempt - 1)
+            local function progress(f)
+                if on_progress then on_progress(from + span * f * 0.5) end
+            end
+            dig = newDig(n, 2)
+            digPass(dig, 2, slots, progress)
+            local m = #dig.removals
+            -- First prefix length that tier 1 cannot solve (m + 1: none).
+            local lo, hi = 0, m + 1
+            if Logic.solve(dig.clues, n, 1) then lo = m + 1 end
+            while hi - lo > 1 do
+                local mid = math.floor((lo + hi) / 2)
+                if Logic.solve(digPrefix(dig, mid), n, 1) then lo = mid else hi = mid end
+            end
+            local first_l2 = lo + 1
+            local ok = first_l2 <= m
+            local tier3 = 0
+            if ok and (diff == "hard" or first_l2 == m) then
+                tier3 = digPass(dig, 3, slots, function(f) progress(1 + f) end)
+            end
+            if diff == "hard" then
+                keep = #dig.removals
+            else
+                local mid = math.floor((easy_removals + m) / 2)
+                keep = math.min(math.max(first_l2, math.min(mid, m - 1)), m)
+            end
+            if ok and (m > first_l2 or tier3 > 0) then break end
+        end
+    end
+    if on_progress then on_progress(1) end
+
+    self.solution = dig.sol
+    self.clues    = digPrefix(dig, keep)
+
+    -- Reset player grid (all empty, no given cells in skyscraper)
     self.grid        = emptyGrid(n)
     self.given       = emptyBoolGrid(n)   -- always false; kept for API consistency
     self.wrong_marks = emptyBoolGrid(n)
@@ -367,11 +478,38 @@ function SkyscraperBoard:checkConflicts()
     end
 end
 
+-- Solved when the grid keeps the rules: every row and column holds 1..n
+-- once and every shown clue sees the right count. Puzzles built since 1.6.0
+-- have one solution, so that is the stored one; a save from before could
+-- have had several, and any of them counts.
 function SkyscraperBoard:isSolved()
     local n = self.n
-    for r = 1, n do
-        for c = 1, n do
-            if self.grid[r][c] ~= self.solution[r][c] then return false end
+    local g = self.grid
+    for i = 1, n do
+        local in_row, in_col = {}, {}
+        for j = 1, n do
+            local a, b = g[i][j], g[j][i]
+            if a < 1 or a > n or in_row[a] or b < 1 or b > n or in_col[b] then
+                return false
+            end
+            in_row[a], in_col[b] = true, true
+        end
+    end
+    local clues = self.clues or {}
+    local function sees(want, line)
+        return not want or countVisible(line) == want
+    end
+    for i = 1, n do
+        local row, row_rev, col, col_rev = {}, {}, {}, {}
+        for j = 1, n do
+            row[j], row_rev[j] = g[i][j], g[i][n - j + 1]
+            col[j], col_rev[j] = g[j][i], g[n - j + 1][i]
+        end
+        if not (sees(clues.left and clues.left[i], row)
+                and sees(clues.right and clues.right[i], row_rev)
+                and sees(clues.top and clues.top[i], col)
+                and sees(clues.bottom and clues.bottom[i], col_rev)) then
+            return false
         end
     end
     return true
@@ -460,5 +598,9 @@ end
 
 -- Export helper for widget
 SkyscraperBoard.countVisible = countVisible
+
+-- For the specs
+SkyscraperBoard._computeAllClues = computeAllClues
+SkyscraperBoard._fallbackSquare  = fallbackSquare
 
 return SkyscraperBoard
